@@ -22,8 +22,10 @@ package aggregator
 
 import (
 	"container/list"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,6 +44,10 @@ import (
 var (
 	errListClosed  = errors.New("metric list is closed")
 	errListsClosed = errors.New("metric lists are closed")
+
+	lock1        = sync.Mutex{}
+	lastPrint1   = time.Time{}
+	annotations1 = make(map[string]map[string]struct{})
 )
 
 type metricList interface {
@@ -431,6 +437,40 @@ func (l *baseMetricList) flushBefore(beforeNanos int64, flushType flushType) {
 	l.metrics.flushBeforeDuration.Record(flushBeforeDuration)
 }
 
+func validateAnnotation1(l *zap.Logger, id string, annotation []byte) {
+	metrics := []string{
+		"container_memory_working_set_bytes",
+		"container_processes",
+		"container_spec_cpu_shares",
+		"kube_pod_container_info",
+		"node_network_transmit_packets_total",
+	}
+
+	for _, m := range metrics {
+		if strings.Contains(id, m) {
+			lock1.Lock()
+			if _, ok := annotations1[m]; !ok {
+				annotations1[m] = make(map[string]struct{})
+			}
+			annotations1[m][base64.StdEncoding.EncodeToString(annotation)] = struct{}{}
+
+			shouldPrint := time.Since(lastPrint1) > (30 * time.Second)
+			if shouldPrint {
+				lastPrint1 = time.Now()
+				values := make([]string, 0)
+				for k, v := range annotations1 {
+					values = values[:0]
+					for k1 := range v {
+						values = append(values, k1)
+					}
+					l.Info("list.go annotations", zap.String("name", k), zap.Strings("annotations", values))
+				}
+			}
+			lock1.Unlock()
+		}
+	}
+}
+
 func (l *baseMetricList) consumeLocalMetric(
 	idPrefix []byte,
 	id metricid.RawID,
@@ -454,6 +494,7 @@ func (l *baseMetricList) consumeLocalMetric(
 		},
 		StoragePolicy: sp,
 	}
+	validateAnnotation1(l.opts.InstrumentOptions().Logger(), id.String(), annotation)
 	if err := l.localWriter.Write(chunkedMetricWithPolicy); err != nil {
 		l.metrics.flushLocal.metricConsumeErrors.Inc(1)
 	} else {
@@ -481,6 +522,7 @@ func (l *baseMetricList) consumeForwardedMetric(
 	value float64,
 	annotation []byte,
 ) {
+	validateAnnotation1(l.opts.InstrumentOptions().Logger(), aggregationKey.aggregationID.String(), annotation)
 	writeFn(aggregationKey, timeNanos, value, annotation)
 	l.metrics.flushForwarded.metricConsumed.Inc(1)
 }

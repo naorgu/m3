@@ -230,6 +230,7 @@ func validateAnnotation(l *zap.Logger, id string, annotation []byte) {
 		"container_processes",
 		"container_spec_cpu_shares",
 		"kube_pod_container_info",
+		"node_network_transmit_packets_total",
 	}
 
 	for _, m := range metrics {
