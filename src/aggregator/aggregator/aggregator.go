@@ -22,9 +22,11 @@ package aggregator
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,6 +62,10 @@ var (
 	errAggregatorAlreadyOpenOrClosed = errors.New("aggregator is already open or closed")
 	errInvalidMetricType             = errors.New("invalid metric type")
 	errShardNotOwned                 = errors.New("aggregator shard is not owned")
+
+	lock        = sync.Mutex{}
+	lastPrint   = time.Time{}
+	annotations = make(map[string]map[string]struct{})
 )
 
 // Aggregator aggregates different types of metrics.
@@ -218,6 +224,39 @@ func (agg *aggregator) placementTick() {
 	}
 }
 
+func validateAnnotation(l *zap.Logger, id string, annotation []byte) {
+	metrics := []string{
+		"container_memory_working_set_bytes",
+		"container_processes",
+		"container_spec_cpu_shares",
+		"kube_pod_container_info",
+	}
+
+	for _, m := range metrics {
+		if strings.Contains(id, m) {
+			lock.Lock()
+			if _, ok := annotations[m]; !ok {
+				annotations[m] = make(map[string]struct{})
+			}
+			annotations[m][base64.StdEncoding.EncodeToString(annotation)] = struct{}{}
+
+			shouldPrint := time.Since(lastPrint) > (30 * time.Second)
+			if shouldPrint {
+				lastPrint = time.Now()
+				values := make([]string, 0)
+				for k, v := range annotations {
+					values = values[:0]
+					for k1 := range v {
+						values = append(values, k1)
+					}
+					l.Info("aggregator.go annotations", zap.String("name", k), zap.Strings("annotations", values))
+				}
+			}
+			lock.Unlock()
+		}
+	}
+}
+
 func (agg *aggregator) AddUntimed(
 	metric unaggregated.MetricUnion,
 	metadatas metadata.StagedMetadatas,
@@ -232,6 +271,7 @@ func (agg *aggregator) AddUntimed(
 		agg.metrics.addUntimed.ReportError(err, agg.electionManager.ElectionState())
 		return err
 	}
+	validateAnnotation(agg.opts.InstrumentOptions().Logger(), metric.ID.String(), metric.Annotation)
 	if err = shard.AddUntimed(metric, metadatas); err != nil {
 		agg.metrics.addUntimed.ReportError(err, agg.electionManager.ElectionState())
 		return err
@@ -252,6 +292,7 @@ func (agg *aggregator) AddTimed(
 		agg.metrics.addTimed.ReportError(err, agg.electionManager.ElectionState())
 		return err
 	}
+	validateAnnotation(agg.opts.InstrumentOptions().Logger(), metric.ID.String(), metric.Annotation)
 	if err = shard.AddTimed(metric, metadata); err != nil {
 		agg.metrics.addTimed.ReportError(err, agg.electionManager.ElectionState())
 		return err
@@ -272,6 +313,7 @@ func (agg *aggregator) AddTimedWithStagedMetadatas(
 		agg.metrics.addTimed.ReportError(err, agg.electionManager.ElectionState())
 		return err
 	}
+	validateAnnotation(agg.opts.InstrumentOptions().Logger(), metric.ID.String(), metric.Annotation)
 	if err = shard.AddTimedWithStagedMetadatas(metric, metas); err != nil {
 		agg.metrics.addTimed.ReportError(err, agg.electionManager.ElectionState())
 		return err
@@ -292,6 +334,7 @@ func (agg *aggregator) AddForwarded(
 		agg.metrics.addForwarded.ReportError(err, agg.electionManager.ElectionState())
 		return err
 	}
+	validateAnnotation(agg.opts.InstrumentOptions().Logger(), metric.ID.String(), metric.Annotation)
 	if err = shard.AddForwarded(metric, metadata); err != nil {
 		agg.metrics.addForwarded.ReportError(err, agg.electionManager.ElectionState())
 		return err
