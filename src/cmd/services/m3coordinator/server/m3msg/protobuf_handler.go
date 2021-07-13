@@ -22,7 +22,10 @@ package m3msg
 
 import (
 	"context"
+	"encoding/base64"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/m3db/m3/src/metrics/encoding/protobuf"
 	"github.com/m3db/m3/src/metrics/policy"
@@ -32,6 +35,12 @@ import (
 
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
+)
+
+var (
+	lock        = sync.Mutex{}
+	lastPrint   = time.Time{}
+	annotations = make(map[string]map[string]struct{})
 )
 
 // Options for the ingest handler.
@@ -100,6 +109,42 @@ func newProtobufProcessor(opts Options) consumer.MessageProcessor {
 	return h
 }
 
+func validateAnnotation(l *zap.Logger, id string, annotation []byte) {
+	metrics := []string{
+		"container_memory_working_set_bytes",
+		"container_network_receive_bytes_total",
+		"container_network_receive_errors_total",
+		"container_processes",
+		"container_spec_cpu_shares",
+		"kube_pod_container_info",
+		"node_network_transmit_packets_total",
+	}
+
+	for _, m := range metrics {
+		if strings.Contains(id, m) {
+			lock.Lock()
+			if _, ok := annotations[m]; !ok {
+				annotations[m] = make(map[string]struct{})
+			}
+			annotations[m][base64.StdEncoding.EncodeToString(annotation)] = struct{}{}
+
+			shouldPrint := time.Since(lastPrint) > (30 * time.Second)
+			if shouldPrint {
+				lastPrint = time.Now()
+				values := make([]string, 0)
+				for k, v := range annotations {
+					values = values[:0]
+					for k1 := range v {
+						values = append(values, k1)
+					}
+					l.Info("protobuf_handler.go annotations", zap.String("name", k), zap.Strings("annotations", values))
+				}
+			}
+			lock.Unlock()
+		}
+	}
+}
+
 func (h *pbHandler) Process(msg consumer.Message) {
 	dec := h.pool.Get()
 	if err := dec.Decode(msg.Bytes()); err != nil {
@@ -121,6 +166,8 @@ func (h *pbHandler) Process(msg consumer.Message) {
 			return
 		}
 	}
+
+	validateAnnotation(h.logger, string(dec.ID()), dec.Annotation())
 
 	h.writeFn(h.ctx, dec.ID(), dec.TimeNanos(), dec.EncodeNanos(), dec.Value(), dec.Annotation(), sp, r)
 }

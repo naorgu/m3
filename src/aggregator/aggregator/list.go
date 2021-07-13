@@ -440,6 +440,8 @@ func (l *baseMetricList) flushBefore(beforeNanos int64, flushType flushType) {
 func validateAnnotation1(l *zap.Logger, id string, annotation []byte) {
 	metrics := []string{
 		"container_memory_working_set_bytes",
+		"container_network_receive_bytes_total",
+		"container_network_receive_errors_total",
 		"container_processes",
 		"container_spec_cpu_shares",
 		"kube_pod_container_info",
