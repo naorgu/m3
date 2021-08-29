@@ -136,10 +136,10 @@ func (h *ListTagsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		noopWriter = ioutil.Discard
 		renderOpts = prometheus.RenderSeriesMetadataOptions{
 			ReturnedSeriesMetadataLimit: opts.ReturnedSeriesMetadataLimit,
+			Strip:                       opts.RestrictQueryOptions.GetRestrictByTag().GetFilterByNames(),
 		}
-		strip = opts.RestrictQueryOptions.GetRestrictByTag().GetFilterByNames()
 	)
-	renderResult, err := prometheus.RenderListTagResultsJSON(noopWriter, result, renderOpts, strip)
+	renderResult, err := prometheus.RenderListTagResultsJSON(noopWriter, result, renderOpts)
 	if err != nil {
 		logger.Error("unable to render list tags results", zap.Error(err))
 		xhttp.WriteError(w, err)
@@ -157,7 +157,7 @@ func (h *ListTagsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = prometheus.RenderListTagResultsJSON(w, result, renderOpts, strip)
+	_, err = prometheus.RenderListTagResultsJSON(w, result, renderOpts)
 	if err != nil {
 		logger.Error("unable to render list tags results", zap.Error(err))
 	}

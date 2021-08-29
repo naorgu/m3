@@ -406,6 +406,7 @@ func renderDefaultTagCompletionResultsJSON(
 // series metadata.
 type RenderSeriesMetadataOptions struct {
 	ReturnedSeriesMetadataLimit int
+	Strip                       [][]byte
 }
 
 // RenderSeriesMetadataResult returns results about a series metadata rendering.
@@ -425,7 +426,6 @@ func RenderListTagResultsJSON(
 	w io.Writer,
 	result *consolidators.CompleteTagsResult,
 	opts RenderSeriesMetadataOptions,
-	strip [][]byte,
 ) (RenderSeriesMetadataResult, error) {
 	if !result.CompleteNameOnly {
 		return RenderSeriesMetadataResult{}, errors.ErrWithNames
@@ -451,7 +451,7 @@ func RenderListTagResultsJSON(
 			limited = true
 			break
 		}
-		if contains(strip, t.Name) {
+		if contains(opts.Strip, t.Name) {
 			continue
 		}
 		rendered++
